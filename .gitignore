@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# torch.compile / inductor caches
+.inductor_cache/
+.compile_state.json
+torchinductor_*/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
