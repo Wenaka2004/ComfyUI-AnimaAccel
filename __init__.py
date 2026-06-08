@@ -16,7 +16,7 @@ import sys
 import torch
 
 
-# --- Environment checks ---
+# --- Safe utilities (compat across PyTorch / ComfyUI versions) ---
 
 def _has_host_compiler() -> bool:
     if sys.platform == "win32":
@@ -30,18 +30,23 @@ if not _has_host_compiler():
     except Exception:
         pass
 
-from comfy_api.torch_helpers import set_torch_compile_wrapper
-
+# comfy_api.torch_helpers is present in any ComfyUI new enough to run Anima
+try:
+    from comfy_api.torch_helpers import set_torch_compile_wrapper
+    _HELPER_OK = True
+except Exception:
+    _HELPER_OK = False
+    print("[AnimaAccel] WARNING: comfy_api.torch_helpers missing — update ComfyUI")
 
 _CUDAGRAPH_MODES = {"max-autotune", "reduce-overhead"}
 
-
 def _allocator_is_malloc_async() -> bool:
     try:
-        return torch.cuda.is_available() and torch.cuda.get_allocator_backend() == "cudaMallocAsync"
+        return torch.cuda.is_available() and (
+            torch.cuda.get_allocator_backend() == "cudaMallocAsync"
+        )
     except Exception:
         return False
-
 
 def skip_torch_compile_dict(guard_entries):
     return [("transformer_options" not in entry.name) for entry in guard_entries]
@@ -67,6 +72,10 @@ class AnimaCompile:
     CATEGORY = "AnimaAccel"
 
     def patch(self, model, mode):
+        if not _HELPER_OK:
+            print("[AnimaAccel] helper missing — returning model unchanged")
+            return (model,)
+
         chosen = mode
 
         if mode in _CUDAGRAPH_MODES and _allocator_is_malloc_async():
@@ -74,7 +83,12 @@ class AnimaCompile:
             print(f"[AnimaAccel] cudaMallocAsync allocator — downgrading "
                   f"'{mode}' to '{chosen}' (CUDA graphs unsupported here)")
 
-        m = model.clone(disable_dynamic=True)
+        # clone(disable_dynamic=True) → static shapes; older ComfyUI may not
+        # have the flag so we try/fallback
+        try:
+            m = model.clone(disable_dynamic=True)
+        except TypeError:
+            m = model.clone()
 
         opts = {"guard_filter_fn": skip_torch_compile_dict}
         if chosen in ("max-autotune", "max-autotune-no-cudagraphs"):
